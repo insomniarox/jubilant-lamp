@@ -6,8 +6,10 @@ Questo repository contiene una semplice API Python per la sentiment analysis, es
 
 - `devops.py`
   Applicazione FastAPI con endpoint `/predict` e `/metrics`.
-- `tests/test_app.py`
-  Test unitari e di integrazione richiesti per il progetto.
+- `tests/test_unit.py`
+  Test unitari sui modelli di input.
+- `tests/test_integration.py`
+  Test di integrazione sugli endpoint API.
 - `Dockerfile`
   Build dell'immagine Docker dell'applicazione.
 - `docker-compose.yml`

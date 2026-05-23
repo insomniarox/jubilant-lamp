@@ -1,7 +1,11 @@
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError
 
-from devops import PredictSentiment
+
+class PredictSentiment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(..., min_length=1)
 
 
 def test_valid_pydantic_input_is_accepted():
