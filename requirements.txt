@@ -3,6 +3,8 @@ uvicorn
 requests
 psutil
 numpy
+pydantic
+scikit-learn
 prometheus-client
 pytest
 httpx

@@ -1,13 +1,13 @@
 # Sentiment Analysis API
 
-Questo repository contiene una semplice API Python per la sentiment analysis, esposta tramite FastAPI e osservabile con Prometheus e Grafana. Il progetto include anche una pipeline Jenkins per build, test e pubblicazione dell'immagine Docker su Docker Hub.
+Questo repository contiene una API FastAPI per la sentiment analysis con metriche Prometheus, dashboard Grafana e una pipeline Jenkins che builda, testa e pubblica l'immagine Docker.
 
-## Contenuto del progetto
+## Struttura del progetto
 
 - `devops.py`
   Applicazione FastAPI con endpoint `/predict` e `/metrics`.
 - `tests/test_unit.py`
-  Test unitari sui modelli di input.
+  Test unitari sui modelli Pydantic.
 - `tests/test_integration.py`
   Test di integrazione sugli endpoint API.
 - `Dockerfile`
@@ -21,45 +21,95 @@ Questo repository contiene una semplice API Python per la sentiment analysis, es
 - `grafana/provisioning/`
   Provisioning automatico di datasource e dashboard in Grafana.
 - `Jenkinsfile`
-  Pipeline CI per build, test e push su Docker Hub.
+  Pipeline CI per build, test e push dell'immagine su Docker Hub.
+- `scripts/generate_live_traffic.py`
+  Script per generare traffico reale verso `/predict` e popolare le metriche.
 
-## Requisiti
+## Prerequisiti
 
-- Python 3.10+ oppure Docker
-- Un file modello locale `sentiment_analysis_model.pkl`
-- Docker e Docker Compose
-- Un account Docker Hub
-- Jenkins, se si vuole usare la pipeline CI
+Per il flusso completo descritto qui sotto:
 
-## Come funziona l'app
+- Docker Engine
+- Docker Compose
+- Git
+- accesso Internet per scaricare immagini Docker e, se necessario, il modello remoto
 
-L'applicazione prova a caricare il modello in questo ordine:
+Verifica rapida:
 
-1. download remoto del file pickle da GitHub
-2. fallback al file locale `sentiment_analysis_model.pkl`
-
-Endpoint disponibili:
-
-- `POST /predict`
-  Riceve un JSON del tipo:
-
-```json
-{
-  "text": "Questo prodotto è ottimo"
-}
+```bash
+docker --version
+docker compose version
+git --version
 ```
 
-  Restituisce:
+Nota sul modello:
 
-```json
-{
-  "sentiment": "positive",
-  "confidence": 0.93,
-  "margin": 0.88
-}
+- l'app prova prima a scaricare `sentiment_analysis_model.pkl` da GitHub
+- se il download fallisce, prova a leggere un file locale `sentiment_analysis_model.pkl` nella root del progetto
+- se nessuna delle due opzioni funziona, il container `app` non parte
+
+## Avvio locale completo con Docker Compose
+
+Questi comandi vanno eseguiti dalla root del repository.
+
+1. Clonare il repository:
+
+```bash
+git clone <URL_DEL_REPOSITORY>
+cd python_sentiment
 ```
 
-  Esempio reale con `curl`:
+2. Costruire e avviare API, Prometheus e Grafana:
+
+```bash
+docker compose up --build -d
+```
+
+3. Verificare che i container siano in esecuzione:
+
+```bash
+docker compose ps
+```
+
+Dovresti vedere tre servizi:
+
+- `sentiment-api`
+- `prometheus`
+- `grafana`
+
+4. Se vuoi controllare i log in tempo reale:
+
+```bash
+docker compose logs -f app
+docker compose logs -f prometheus
+docker compose logs -f grafana
+```
+
+Per fermare tutto:
+
+```bash
+docker compose down
+```
+
+Per fermare tutto eliminando anche i volumi anonimi:
+
+```bash
+docker compose down -v
+```
+
+## Interagire con la web app
+
+Una volta avviato lo stack, gli endpoint sono:
+
+- API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
+- Metriche Prometheus: `http://localhost:8000/metrics`
+- Prometheus UI: `http://localhost:9090`
+- Grafana UI: `http://localhost:3000`
+
+### Test manuale con `curl`
+
+Richiesta valida:
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -67,7 +117,7 @@ curl -X POST http://localhost:8000/predict \
   -d '{"text": "I love this movie"}'
 ```
 
-  Esempio di risposta:
+Esempio di risposta:
 
 ```json
 {
@@ -77,164 +127,282 @@ curl -X POST http://localhost:8000/predict \
 }
 ```
 
-- `GET /metrics`
-  Espone le metriche Prometheus dell'applicazione.
-
-## Installazione locale senza Docker
-
-Creare un ambiente virtuale e installare le dipendenze:
+Richiesta verso le metriche:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+curl http://localhost:8000/metrics
 ```
 
-Avvio dell'API:
+Puoi anche usare Swagger UI per inviare richieste dal browser:
+
+```text
+http://localhost:8000/docs
+```
+
+## Come verificare Prometheus
+
+Prometheus viene configurato automaticamente tramite `prometheus/prometheus.yml` e fa scrape del target `app:8000/metrics` ogni 15 secondi.
+
+### Controlli da fare
+
+1. Aprire:
+
+```text
+http://localhost:9090/targets
+```
+
+2. Verificare che il target `python-api` sia `UP`
+
+3. Provare alcune query PromQL nella UI di Prometheus:
+
+```text
+sentiment_prediction_requests_total
+```
+
+```text
+sentiment_prediction_errors_total
+```
+
+```text
+app_cpu_usage_percent
+```
+
+```text
+app_memory_usage_bytes
+```
+
+Se preferisci usare `curl`:
 
 ```bash
-uvicorn devops:app --host 0.0.0.0 --port 8000
+curl "http://localhost:9090/api/v1/query?query=sentiment_prediction_requests_total"
+curl "http://localhost:9090/api/v1/query?query=app_memory_usage_bytes"
 ```
 
-URL utili:
+## Generare traffico reale per vedere i grafici muoversi
 
-- API: `http://localhost:8000`
-- Swagger UI: `http://localhost:8000/docs`
-- Metriche Prometheus: `http://localhost:8000/metrics`
-
-## Test
-
-I test sono separati in due gruppi:
-
-- `tests/test_unit.py`
-  Contiene i test unitari sul modello Pydantic:
-  - input valido accettato
-  - testo vuoto rifiutato
-  - campi extra rifiutati
-
-- `tests/test_integration.py`
-  Contiene i test di integrazione sugli endpoint:
-  - `POST /predict`
-  - `GET /metrics`
-
-Esecuzione di tutti i test:
+Per popolare le metriche in modo continuo puoi usare lo script incluso nel repository:
 
 ```bash
-pytest tests/
+python3 scripts/generate_live_traffic.py --base-url http://localhost:8000 --cycles 20 --sleep 1
 ```
 
-Esecuzione dei soli test unitari:
+Questo script:
+
+- invia richieste valide a `/predict`
+- invia anche un payload composto da soli spazi
+- aiuta a far crescere sia `sentiment_prediction_requests_total` sia `sentiment_prediction_errors_total`
+
+Se vuoi più traffico:
 
 ```bash
-pytest tests/test_unit.py
+python3 scripts/generate_live_traffic.py --base-url http://localhost:8000 --cycles 50 --sleep 0.5
 ```
 
-Esecuzione dei soli test di integrazione:
+Se vuoi osservare meglio i pannelli basati su `rate(...)`, lascia girare lo script per almeno 1 o 2 minuti.
 
-```bash
-pytest tests/test_integration.py
+## Come verificare Grafana
+
+Grafana è già configurato tramite provisioning:
+
+- datasource Prometheus in `grafana/provisioning/datasources/datasource.yml`
+- dashboard in `grafana-dashboard.json`
+
+### Accesso
+
+Apri:
+
+```text
+http://localhost:3000
 ```
 
-## Utilizzo con Docker
-
-Build dell'immagine:
-
-```bash
-docker build -t j0yless/sentiment-analisys:latest .
-```
-
-Avvio del solo container API:
-
-```bash
-docker run --rm -p 8000:8000 j0yless/sentiment-analisys:latest
-```
-
-Nota:
-Il `CMD` nel `Dockerfile` avvia Uvicorn di default. Se si vuole usare la stessa immagine per i test, basta sovrascrivere il comando:
-
-```bash
-docker run --rm j0yless/sentiment-analisys:latest pytest tests/
-```
-
-## Utilizzo con Docker Compose
-
-Per avviare API, Prometheus e Grafana insieme:
-
-```bash
-docker compose up -d
-```
-
-Servizi esposti:
-
-- API: `http://localhost:8000`
-- Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000`
-
-Credenziali Grafana di default:
+Credenziali di default:
 
 - username: `admin`
 - password: `admin`
 
-Grafana viene configurato automaticamente per:
+La dashboard custom viene impostata come home dashboard. Il titolo atteso e:
 
-- usare Prometheus come datasource di default
-- caricare `grafana-dashboard.json`
-- aprire quella dashboard come home dashboard
+```text
+Sentiment API Monitoring
+```
 
-Per fermare lo stack:
+### Pannelli attesi
+
+La dashboard contiene questi grafici:
+
+- `Prediction Throughput`
+- `Prediction Errors`
+- `Prediction Latency p95`
+- `CPU Usage`
+- `Memory Usage`
+
+### Verifica pratica passo per passo
+
+1. Avviare lo stack:
 
 ```bash
-docker compose down
+docker compose up --build -d
 ```
 
-## Configurazione Jenkins
+2. Inviare alcune richieste manuali o usare lo script:
 
-La pipeline definita in `Jenkinsfile` esegue:
+```bash
+python3 scripts/generate_live_traffic.py --base-url http://localhost:8000 --cycles 20 --sleep 1
+```
+
+3. Aprire Prometheus e confermare che il target sia `UP`:
+
+```text
+http://localhost:9090/targets
+```
+
+4. Aprire Grafana:
+
+```text
+http://localhost:3000
+```
+
+5. Controllare nella home dashboard che:
+
+- `Prediction Throughput` mostri valori sopra zero
+- `Prediction Errors` mostri attività se hai inviato payload invalidi
+- `Prediction Latency p95` mostri una serie temporale
+- `CPU Usage` e `Memory Usage` mostrino dati del processo FastAPI
+
+Se non vedi nulla subito, aspetta almeno un intervallo di scrape di Prometheus, cioe circa 15 secondi, poi aggiorna la dashboard.
+
+## Setup Jenkins in Docker dall'inizio alla fine
+
+Questa sezione assume un host Linux con Docker gia installato.
+
+### Prima di iniziare
+
+Il `Jenkinsfile` usa questi step:
 
 1. checkout del repository
-2. build dell'immagine Docker con tag `${BUILD_NUMBER}`
-3. esecuzione dei test dentro quell'immagine
-4. push dell'immagine su Docker Hub
-5. push del tag `latest`
+2. `docker build`
+3. `docker run ... pytest tests/`
+4. `docker login`
+5. `docker push`
 
-### Credential necessaria
+Quindi Jenkins deve avere accesso al Docker daemon dell'host.
 
-In Jenkins bisogna creare una credenziale di tipo `Username with password`:
+Attenzione:
 
-- ID: `docker-hub-credentials`
-- Username: username Docker Hub
-- Password: access token Docker Hub consigliato
+- l'immagine da pubblicare e impostata in `Jenkinsfile` come `j0yless/sentiment-analisys`
+- se vuoi pubblicare nel tuo Docker Hub, aggiorna `IMAGE_NAME` nel `Jenkinsfile` prima di eseguire la pipeline
 
-### Configurazione job Jenkins
+### 1. Creare il volume di Jenkins
 
-Per un job semplice collegato a un solo repository GitHub:
-
-1. creare un Pipeline job
-2. collegarlo al repository GitHub
-3. abilitare il polling SCM se Jenkins gira in locale
-4. usare il `Jenkinsfile` presente nel repository
-
-Configurazione consigliata se Jenkins gira in locale:
-
-- creare un job di tipo `Pipeline`
-- scegliere `Pipeline script from SCM`
-- selezionare `Git`
-- inserire l'URL del repository GitHub
-- impostare il branch corretto, ad esempio `*/main`
-- impostare `Script Path` su `Jenkinsfile`
-- lasciare che il polling sia gestito dal `Jenkinsfile`, che usa:
-
-```groovy
-pollSCM('H/5 * * * *')
+```bash
+docker volume create jenkins_home
 ```
 
-Questo significa che Jenkins controllerà il repository circa ogni 5 minuti.
+### 2. Avviare Jenkins in un container con accesso a Docker
 
-Se il repository è privato, bisogna aggiungere anche le credenziali GitHub nella configurazione SCM del job.
+```bash
+docker run -d \
+  --name jenkins \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$(command -v docker)":/usr/bin/docker \
+  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+  jenkins/jenkins:lts-jdk17
+```
 
-### Comandi principali della pipeline
+Verifica che il container sia attivo:
 
-La logica è equivalente a:
+```bash
+docker ps
+```
+
+### 3. Recuperare la password iniziale di Jenkins
+
+```bash
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+### 4. Completare il setup iniziale via browser
+
+Apri:
+
+```text
+http://localhost:8080
+```
+
+Poi:
+
+1. incolla la password iniziale
+2. scegli `Install suggested plugins`
+3. crea l'utente admin
+4. conferma l'URL di Jenkins
+
+Plugin importanti per questo repository:
+
+- Pipeline
+- Git
+- Credentials Binding
+
+Normalmente sono inclusi nel set consigliato.
+
+### 5. Aggiungere le credenziali Docker Hub
+
+Il `Jenkinsfile` si aspetta una credenziale con ID:
+
+```text
+docker-hub-credentials
+```
+
+Passi:
+
+1. `Manage Jenkins`
+2. `Credentials`
+3. scegli il domain globale
+4. `Add Credentials`
+5. tipo: `Username with password`
+6. username: il tuo username Docker Hub
+7. password: il tuo access token Docker Hub oppure la password
+8. ID: `docker-hub-credentials`
+
+### 6. Creare il job Pipeline
+
+Passi:
+
+1. `New Item`
+2. inserisci un nome, ad esempio `sentiment-api-pipeline`
+3. scegli `Pipeline`
+4. `OK`
+
+Nella configurazione del job:
+
+1. in `Definition` scegli `Pipeline script from SCM`
+2. in `SCM` scegli `Git`
+3. inserisci l'URL del repository
+4. se il repository e privato, aggiungi le credenziali Git
+5. in `Branches to build` imposta il branch corretto, per esempio `*/main`
+6. in `Script Path` lascia `Jenkinsfile`
+7. salva
+
+### 7. Lanciare la pipeline
+
+Dal job:
+
+1. clicca `Build Now`
+2. apri `Console Output`
+
+Le fasi attese sono:
+
+- `Checkout`
+- `Build`
+- `Test`
+- `Push Docker Image`
+
+### 8. Cosa fa la pipeline in pratica
+
+La logica e equivalente a:
 
 ```bash
 docker build -t j0yless/sentiment-analisys:${BUILD_NUMBER} .
@@ -244,60 +412,128 @@ docker tag j0yless/sentiment-analisys:${BUILD_NUMBER} j0yless/sentiment-analisys
 docker push j0yless/sentiment-analisys:latest
 ```
 
-## Pubblicazione e deploy
+### 9. Verificare che il push sia andato a buon fine
 
-Attualmente il repository gestisce la pubblicazione dell'immagine su Docker Hub. Docker Hub è il registry, non il server di staging o produzione.
+Controlla:
 
-Il flusso corretto è:
+- il log della build Jenkins
+- il repository su Docker Hub
 
-1. Jenkins builda l'immagine
-2. Jenkins testa l'immagine
-3. Jenkins pubblica l'immagine su Docker Hub
-4. un server di staging o produzione scarica l'immagine da Docker Hub
-5. il server avvia il container
+Se vuoi usare l'immagine pubblicata nello stack locale:
 
-## Manutenzione ordinaria
+```bash
+export APP_IMAGE=j0yless/sentiment-analisys:latest
+docker compose up -d
+```
 
-Attività consigliate:
+### 10. Fermare Jenkins
+
+```bash
+docker stop jenkins
+docker start jenkins
+```
+
+Per rimuovere il container mantenendo i dati nel volume:
+
+```bash
+docker rm -f jenkins
+```
+
+Per rimuovere anche il volume:
+
+```bash
+docker rm -f jenkins
+docker volume rm jenkins_home
+```
+
+## Setup locale Python senza Docker
+
+Se vuoi eseguire l'app direttamente sul sistema:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn devops:app --host 0.0.0.0 --port 8000
+```
+
+Eseguire i test:
+
+```bash
+pytest tests/
+```
+
+## Problemi comuni
+
+### Il container `app` si ferma subito
+
+Controlla i log:
+
+```bash
+docker compose logs app
+```
+
+Verifica:
+
+- disponibilita dell'URL remoto del modello
+- presenza del file locale `sentiment_analysis_model.pkl`
+- compatibilita del file pickle con l'ambiente Python usato
+
+### Prometheus non vede il target
+
+Verifica:
+
+```bash
+docker compose ps
+docker compose logs prometheus
+curl http://localhost:8000/metrics
+```
+
+Poi controlla:
+
+```text
+http://localhost:9090/targets
+```
+
+Il target `python-api` deve risultare `UP`.
+
+### Grafana parte ma la dashboard e vuota
+
+Verifica:
+
+- che Prometheus sia raggiungibile
+- che `http://localhost:8000/metrics` esponga metriche
+- che il target `python-api` sia `UP`
+- che tu abbia generato traffico verso `/predict`
+
+Comando utile:
+
+```bash
+python3 scripts/generate_live_traffic.py --base-url http://localhost:8000 --cycles 20 --sleep 1
+```
+
+### La pipeline Jenkins fallisce sul push
+
+Verifica:
+
+- che la credenziale `docker-hub-credentials` esista davvero
+- che username e token Docker Hub siano corretti
+- che `IMAGE_NAME` nel `Jenkinsfile` punti a un repository Docker Hub che puoi pubblicare
+
+### La pipeline Jenkins fallisce sui comandi Docker
+
+Verifica dentro il container Jenkins:
+
+```bash
+docker exec jenkins docker version
+```
+
+Se questo comando fallisce, Jenkins non ha accesso corretto al Docker daemon dell'host.
+
+## Manutenzione consigliata
 
 - aggiornare periodicamente le dipendenze in `requirements.txt`
 - verificare che `sentiment_analysis_model.pkl` sia compatibile con il codice corrente
 - controllare che la dashboard Grafana usi le metriche effettivamente esposte dall'app
 - tenere sotto controllo `api.log`
 - testare periodicamente la build Docker e la pipeline Jenkins
-
-## Problemi comuni
-
-### Il modello non viene caricato
-
-Verificare:
-
-- disponibilità dell'URL remoto
-- presenza del file locale `sentiment_analysis_model.pkl`
-- compatibilità del file pickle con l'ambiente Python usato
-
-### I test falliscono nel container
-
-Verificare:
-
-- che `pytest` sia presente in `requirements.txt`
-- che il file del modello sia disponibile, se necessario
-- che l'immagine sia stata buildata dopo l'ultima modifica
-
-### Grafana parte ma non mostra dati
-
-Verificare:
-
-- che Prometheus sia raggiungibile
-- che `http://localhost:8000/metrics` esponga effettivamente le metriche
-- che il target `app:8000` sia correttamente risolto all'interno di Docker Compose
-
-## Evoluzioni possibili
-
-Miglioramenti naturali per una versione più robusta:
-
-- tag immutabili basati su commit SHA invece di solo `BUILD_NUMBER`
-- ambiente di staging separato dal push su Docker Hub
-- linting e security scan in pipeline
-- gestione più esplicita del file modello
-- persistenza per Grafana e Prometheus
