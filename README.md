@@ -171,12 +171,47 @@ app_cpu_usage_percent
 app_memory_usage_bytes
 ```
 
+Per vedere tutte le metriche disponibili nella UI di Prometheus:
+
+```text
+{__name__=~".+"}
+```
+
+Per vedere solo le metriche custom di questo progetto:
+
+```text
+{__name__=~"sentiment_.*|app_cpu_usage_percent|app_memory_usage_bytes"}
+```
+
+Se vuoi vedere solo i nomi delle metriche note a Prometheus:
+
+```bash
+curl http://localhost:9090/api/v1/label/__name__/values
+```
+
+Se vuoi vedere tutte le serie con i relativi label:
+
+```bash
+curl "http://localhost:9090/api/v1/series?match[]={__name__=~\".+\"}"
+```
+
 Se preferisci usare `curl`:
 
 ```bash
 curl "http://localhost:9090/api/v1/query?query=sentiment_prediction_requests_total"
 curl "http://localhost:9090/api/v1/query?query=app_memory_usage_bytes"
 ```
+
+Le metriche custom esposte dall'app sono:
+
+- `sentiment_prediction_requests_total`
+- `sentiment_prediction_errors_total`
+- `sentiment_prediction_duration_seconds`
+- `sentiment_prediction_duration_seconds_bucket`
+- `sentiment_prediction_duration_seconds_sum`
+- `sentiment_prediction_duration_seconds_count`
+- `app_cpu_usage_percent`
+- `app_memory_usage_bytes`
 
 ## Generare traffico reale per vedere i grafici muoversi
 
@@ -235,6 +270,23 @@ La dashboard contiene questi grafici:
 - `Prediction Latency p95`
 - `CPU Usage`
 - `Memory Usage`
+
+### Copertura metriche della dashboard
+
+La dashboard usa tutte le metriche custom principali esposte dall'app:
+
+- `Prediction Throughput` usa `rate(sentiment_prediction_requests_total[1m])`
+- `Prediction Errors` usa `rate(sentiment_prediction_errors_total[1m])`
+- `Prediction Latency p95` usa `histogram_quantile(0.95, sum(rate(sentiment_prediction_duration_seconds_bucket[5m])) by (le))`
+- `CPU Usage` usa `app_cpu_usage_percent`
+- `Memory Usage` usa `app_memory_usage_bytes`
+
+Quindi, rispetto alle metriche di progetto, la dashboard e coerente e popola tutti i grafici previsti.
+
+Nota:
+
+- `sentiment_prediction_duration_seconds_sum` e `sentiment_prediction_duration_seconds_count` non hanno un pannello dedicato, ma sono gia usate indirettamente dal pannello di latenza tramite la famiglia histogram
+- le metriche di default esportate dal client Prometheus Python, come le metriche di processo o runtime, non hanno pannelli dedicati in questa dashboard
 
 ### Verifica pratica passo per passo
 
